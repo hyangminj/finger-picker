@@ -42,3 +42,7 @@ npx serve .
 - Uses `touch-action: none` and gesture prevention for reliable mobile behavior
 - Canvas background for ambient particles, DOM elements for finger circles
 - CSS transitions and keyframe animations for smooth effects
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
