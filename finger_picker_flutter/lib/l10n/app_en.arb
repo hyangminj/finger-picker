@@ -1,0 +1,15 @@
+{
+  "@@locale": "en",
+  "placeYourFingers": "Place your fingers",
+  "@placeYourFingers": {
+    "description": "Main prompt text"
+  },
+  "oneWillBeChosen": "One will be chosen",
+  "@oneWillBeChosen": {
+    "description": "Subtitle prompt text"
+  },
+  "chosen": "CHOSEN",
+  "@chosen": {
+    "description": "Winner label"
+  }
+}
