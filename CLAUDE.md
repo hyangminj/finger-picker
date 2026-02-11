@@ -4,25 +4,43 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Chwazi-like finger picker web app for random selection. Multiple people place fingers on a touch screen, and after a countdown, one finger is randomly chosen with visual effects.
+A Chwazi-like finger picker app for random selection, available as a web app and a Flutter mobile app. Multiple people place fingers on a touch screen, and after a countdown, one finger is randomly chosen with visual effects.
 
-## Running Locally
+## Project Structure
+
+```
+/
+├── web/                ← Web version (single-file app)
+│   └── index.html
+├── flutter/            ← Flutter mobile app
+│   ├── lib/main.dart
+│   ├── android/
+│   ├── ios/
+│   └── ...
+├── README.md
+├── CLAUDE.md
+└── LICENSE
+```
+
+## Web Version (`web/`)
+
+### Running Locally
 
 Open directly in a browser:
 ```bash
-open index.html
+open web/index.html
 ```
 
 Or serve with a local server:
 ```bash
-npx serve .
+npx serve web
 ```
 
-## Architecture
+### Architecture
 
-**Single-file application**: All HTML, CSS, and JavaScript are contained in `index.html`. There are no dependencies, no build step, and no external libraries.
+**Single-file application**: All HTML, CSS, and JavaScript are contained in `web/index.html`. There are no dependencies, no build step, and no external libraries.
 
-### Key Components
+#### Key Components
 
 - **Touch/Mouse Event System**: Handles multi-touch input (up to 16 simultaneous touches) with mouse fallback for desktop testing
 - **State Machine**: `idle` → `touching` → `countdown` → `selected` states control the application flow
@@ -33,14 +51,14 @@ npx serve .
   - SVG countdown ring in top-right corner
 - **Countdown Mechanism**: 2-second timer that resets when new fingers join, using `requestAnimationFrame` for smooth progress updates
 
-### State Flow
+#### State Flow
 
 1. **idle**: No fingers on screen, prompt visible
 2. **touching**: 1 finger detected, prompt hidden
 3. **countdown**: 2+ fingers detected, countdown ring appears and animates
 4. **selected**: Winner chosen, losers fade out, winner pulses with effects
 
-### Mobile Optimizations
+#### Mobile Optimizations
 
 The app uses extensive touch handling and gesture prevention for reliable mobile behavior:
 - `touch-action: none` prevents default browser gestures
@@ -49,7 +67,7 @@ The app uses extensive touch handling and gesture prevention for reliable mobile
 - `gesturestart/change/end` event prevention for iOS Safari
 - Pull-to-refresh and overscroll prevention
 
-### Color System
+#### Color System
 
 16 predefined colors in the `COLORS` array are cycled through for each finger. Colors are used for:
 - Finger circle gradients (with programmatic lightening/darkening)
@@ -57,10 +75,27 @@ The app uses extensive touch handling and gesture prevention for reliable mobile
 - Particle effects
 - Winner label
 
-### Performance Considerations
+#### Performance Considerations
 
 - Background particles limited to 30 concurrent
 - `devicePixelRatio` used for crisp canvas rendering on high-DPI screens
 - `will-change` CSS property on finger elements
 - `requestAnimationFrame` for all animations
 - Efficient particle cleanup via reverse iteration
+
+## Flutter Version (`flutter/`)
+
+### Running Locally
+
+```bash
+cd flutter
+flutter pub get
+flutter run
+```
+
+### Architecture
+
+- Flutter app with Korean localization support
+- See `flutter/lib/main.dart` for the main application code
+- See `flutter/DEPLOYMENT_GUIDE.md` for deployment instructions
+- See `flutter/INSTALLATION.md` for setup instructions
