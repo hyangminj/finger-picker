@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0, minimum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Finger Picker</title>
+<style>
+  *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background: #0a0a0f;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    color: #fff;
+  }
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 0;
+  }
+
+  #ui-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #prompt {
+    text-align: center;
+    transition: opacity 0.5s ease;
+    pointer-events: none;
+  }
+
+  #prompt h1 {
+    font-size: 2rem;
+    font-weight: 300;
+    letter-spacing: 0.05em;
+    color: rgba(255, 255, 255, 0.7);
+    margin-bottom: 0.5rem;
+  }
+
+  #prompt p {
+    font-size: 0.95rem;
+    color: rgba(255, 255, 255, 0.35);
+    letter-spacing: 0.03em;
+  }
+
+  .hidden {
+    opacity: 0 !important;
+  }
+
+  #countdown-ring {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    width: 48px;
+    height: 48px;
+    z-index: 2;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+  }
+
+  #countdown-ring.visible {
+    opacity: 1;
+  }
+
+  #countdown-ring circle.track {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.1);
+    stroke-width: 3;
+  }
+
+  #countdown-ring circle.progress {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.6);
+    stroke-width: 3;
+    stroke-linecap: round;
+    transform: rotate(-90deg);
+    transform-origin: center;
+    transition: stroke-dashoffset 0.05s linear;
+  }
+
+  /* Particle burst keyframes generated dynamically */
+  @keyframes pulse-glow {
+    0%, 100% { transform: scale(1); filter: brightness(1); }
+    50% { transform: scale(1.15); filter: brightness(1.3); }
+  }
+
+  @keyframes fade-out-circle {
+    to {
+      opacity: 0;
+      transform: scale(0.5);
+    }
+  }
+
+  @keyframes winner-entrance {
+    0% { transform: scale(1); }
+    30% { transform: scale(1.6); }
+    60% { transform: scale(0.9); }
+    100% { transform: scale(1.1); }
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% center; }
+    100% { background-position: 200% center; }
+  }
+
+  @keyframes ripple-expand {
+    0% {
+      transform: scale(0);
+      opacity: 0.5;
+    }
+    100% {
+      transform: scale(4);
+      opacity: 0;
+    }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>
+
+<div id="ui-overlay">
+  <div id="prompt">
+    <h1>Place your fingers</h1>
+    <p>One will be chosen</p>
+  </div>
+</div>
+
+<svg id="countdown-ring" viewBox="0 0 48 48">
+  <circle class="track" cx="24" cy="24" r="20"/>
+  <circle class="progress" cx="24" cy="24" r="20"
+    stroke-dasharray="125.66"
+    stroke-dashoffset="125.66"/>
+</svg>
+
+<script>
+(function() {
+  'use strict';
+
+  // --- Constants ---
+  const COLORS = [
+    '#FF6B6B', '#4ECDC4', '#FFE66D', '#A78BFA',
+    '#F472B6', '#34D399', '#FB923C', '#60A5FA',
+    '#E879F9', '#2DD4BF', '#FBBF24', '#818CF8',
+    '#F87171', '#6EE7B7', '#FCD34D', '#C084FC',
+  ];
+  const CIRCLE_RADIUS = 44;
+  const COUNTDOWN_MS = 2000;
+  const CIRCUMFERENCE = 2 * Math.PI * 20; // for countdown ring
+
+  // --- State ---
+  let touches = new Map(); // id -> { x, y, color, element, particles }
+  let colorIndex = 0;
+  let countdownTimer = null;
+  let countdownStart = null;
+  let animFrameId = null;
+  let state = 'idle'; // idle | touching | countdown | selected
+  let winnerId = null;
+  let fingerContainer = null;
+  let bgCtx = null;
+  let bgCanvas = null;
+  let bgParticles = [];
+
+  // --- DOM refs ---
+  const prompt = document.getElementById('prompt');
+  const countdownRing = document.getElementById('countdown-ring');
+  const progressCircle = countdownRing.querySelector('.progress');
+
+  // --- Init ---
+  function init() {
+    // Create finger container
+    fingerContainer = document.createElement('div');
+    fingerContainer.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;';
+    document.body.appendChild(fingerContainer);
+
+    // Background canvas
+    bgCanvas = document.getElementById('bg-canvas');
+    bgCtx = bgCanvas.getContext('2d');
+    resizeBgCanvas();
+    window.addEventListener('resize', resizeBgCanvas);
+    animateBg();
+
+    // Touch events on body for maximum coverage
+    document.body.addEventListener('touchstart', onTouchStart, { passive: false });
+    document.body.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.body.addEventListener('touchend', onTouchEnd, { passive: false });
+    document.body.addEventListener('touchcancel', onTouchEnd, { passive: false });
+
+    // Mouse fallback for desktop testing
+    document.body.addEventListener('mousedown', onMouseDown);
+    document.body.addEventListener('mousemove', onMouseMove);
+    document.body.addEventListener('mouseup', onMouseUp);
+
+    progressCircle.setAttribute('stroke-dasharray', CIRCUMFERENCE);
+    progressCircle.setAttribute('stroke-dashoffset', CIRCUMFERENCE);
+  }
+
+  // --- Background ambient particles ---
+  function resizeBgCanvas() {
+    bgCanvas.width = window.innerWidth * devicePixelRatio;
+    bgCanvas.height = window.innerHeight * devicePixelRatio;
+  }
+
+  function animateBg() {
+    bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+
+    // Subtle floating particles
+    if (bgParticles.length < 30 && Math.random() < 0.03) {
+      bgParticles.push({
+        x: Math.random() * bgCanvas.width,
+        y: bgCanvas.height + 10,
+        vx: (Math.random() - 0.5) * 0.5,
+        vy: -(0.3 + Math.random() * 0.7),
+        r: 1 + Math.random() * 2,
+        alpha: 0.1 + Math.random() * 0.15,
+        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      });
+    }
+
+    for (let i = bgParticles.length - 1; i >= 0; i--) {
+      const p = bgParticles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.alpha -= 0.0003;
+      if (p.alpha <= 0 || p.y < -10) {
+        bgParticles.splice(i, 1);
+        continue;
+      }
+      bgCtx.beginPath();
+      bgCtx.arc(p.x, p.y, p.r * devicePixelRatio, 0, Math.PI * 2);
+      bgCtx.fillStyle = hexToRgba(p.color, p.alpha);
+      bgCtx.fill();
+    }
+
+    requestAnimationFrame(animateBg);
+  }
+
+  // --- Finger circle creation ---
+  function createFingerElement(x, y, color) {
+    const el = document.createElement('div');
+    const size = CIRCLE_RADIUS * 2;
+    el.style.cssText = `
+      position: fixed;
+      width: ${size}px;
+      height: ${size}px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, ${lighten(color, 30)}, ${color} 60%, ${darken(color, 20)});
+      box-shadow: 0 0 30px ${hexToRgba(color, 0.4)}, 0 0 60px ${hexToRgba(color, 0.15)}, inset 0 -3px 8px ${hexToRgba('#000', 0.2)};
+      left: ${x - CIRCLE_RADIUS}px;
+      top: ${y - CIRCLE_RADIUS}px;
+      transform: scale(0);
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease;
+      pointer-events: none;
+      will-change: transform, opacity, left, top;
+      z-index: 10;
+    `;
+
+    // Inner highlight
+    const highlight = document.createElement('div');
+    highlight.style.cssText = `
+      position: absolute;
+      width: 40%;
+      height: 40%;
+      top: 12%;
+      left: 18%;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,255,0.4), transparent);
+      pointer-events: none;
+    `;
+    el.appendChild(highlight);
+
+    fingerContainer.appendChild(el);
+
+    // Animate in
+    requestAnimationFrame(() => {
+      el.style.transform = 'scale(1)';
+    });
+
+    return el;
+  }
+
+  // --- Touch handling ---
+  function onTouchStart(e) {
+    e.preventDefault();
+
+    if (state === 'selected') {
+      resetAll();
+      return;
+    }
+
+    for (const touch of e.changedTouches) {
+      addFinger(touch.identifier, touch.clientX, touch.clientY);
+    }
+
+    updateState();
+  }
+
+  function onTouchMove(e) {
+    e.preventDefault();
+    if (state === 'selected') return;
+
+    for (const touch of e.changedTouches) {
+      moveFinger(touch.identifier, touch.clientX, touch.clientY);
+    }
+  }
+
+  function onTouchEnd(e) {
+    e.preventDefault();
+    if (state === 'selected') return;
+
+    for (const touch of e.changedTouches) {
+      removeFinger(touch.identifier);
+    }
+
+    updateState();
+  }
+
+  // Mouse fallback (single finger for desktop testing)
+  let mouseDown = false;
+  function onMouseDown(e) {
+    if (state === 'selected') {
+      resetAll();
+      return;
+    }
+    mouseDown = true;
+    addFinger('mouse', e.clientX, e.clientY);
+    updateState();
+  }
+  function onMouseMove(e) {
+    if (!mouseDown || state === 'selected') return;
+    moveFinger('mouse', e.clientX, e.clientY);
+  }
+  function onMouseUp(e) {
+    if (state === 'selected') return;
+    mouseDown = false;
+    removeFinger('mouse');
+    updateState();
+  }
+
+  function addFinger(id, x, y) {
+    if (touches.has(id)) return;
+
+    const color = COLORS[colorIndex % COLORS.length];
+    colorIndex++;
+
+    const element = createFingerElement(x, y, color);
+
+    touches.set(id, { x, y, color, element });
+
+    // Spawn small ripple at touch point
+    spawnRipple(x, y, color);
+
+    // Reset countdown since new finger arrived
+    resetCountdown();
+  }
+
+  function moveFinger(id, x, y) {
+    const finger = touches.get(id);
+    if (!finger) return;
+
+    finger.x = x;
+    finger.y = y;
+    finger.element.style.left = (x - CIRCLE_RADIUS) + 'px';
+    finger.element.style.top = (y - CIRCLE_RADIUS) + 'px';
+  }
+
+  function removeFinger(id) {
+    const finger = touches.get(id);
+    if (!finger) return;
+
+    finger.element.style.transform = 'scale(0)';
+    finger.element.style.opacity = '0';
+    setTimeout(() => {
+      if (finger.element.parentNode) {
+        finger.element.parentNode.removeChild(finger.element);
+      }
+    }, 400);
+
+    touches.delete(id);
+    resetCountdown();
+  }
+
+  // --- State management ---
+  function updateState() {
+    if (touches.size === 0) {
+      state = 'idle';
+      prompt.classList.remove('hidden');
+      countdownRing.classList.remove('visible');
+      resetCountdown();
+    } else if (touches.size >= 2 && state !== 'selected') {
+      state = 'countdown';
+      prompt.classList.add('hidden');
+      startCountdown();
+    } else if (touches.size === 1 && state !== 'selected') {
+      state = 'touching';
+      prompt.classList.add('hidden');
+      countdownRing.classList.remove('visible');
+      resetCountdown();
+    }
+  }
+
+  // --- Countdown ---
+  function startCountdown() {
+    resetCountdown();
+    countdownStart = performance.now();
+    countdownRing.classList.add('visible');
+
+    animFrameId = requestAnimationFrame(tickCountdown);
+  }
+
+  function tickCountdown(now) {
+    if (!countdownStart) return;
+
+    const elapsed = now - countdownStart;
+    const progress = Math.min(elapsed / COUNTDOWN_MS, 1);
+
+    // Update ring
+    const offset = CIRCUMFERENCE * (1 - progress);
+    progressCircle.setAttribute('stroke-dashoffset', offset);
+
+    // Pulse fingers slightly as countdown progresses
+    if (progress > 0.5) {
+      const intensity = (progress - 0.5) * 2;
+      touches.forEach((finger) => {
+        const scale = 1 + Math.sin(now * 0.01) * 0.03 * intensity;
+        if (state !== 'selected') {
+          finger.element.style.transform = `scale(${scale})`;
+        }
+      });
+    }
+
+    if (progress >= 1) {
+      selectWinner();
+      return;
+    }
+
+    animFrameId = requestAnimationFrame(tickCountdown);
+  }
+
+  function resetCountdown() {
+    if (animFrameId) {
+      cancelAnimationFrame(animFrameId);
+      animFrameId = null;
+    }
+    countdownStart = null;
+    progressCircle.setAttribute('stroke-dashoffset', CIRCUMFERENCE);
+
+    // Reset finger scales
+    touches.forEach((finger) => {
+      if (state !== 'selected') {
+        finger.element.style.transform = 'scale(1)';
+      }
+    });
+  }
+
+  // --- Winner selection ---
+  function selectWinner() {
+    state = 'selected';
+    countdownRing.classList.remove('visible');
+
+    const ids = Array.from(touches.keys());
+    const winnerIndex = Math.floor(Math.random() * ids.length);
+    winnerId = ids[winnerIndex];
+    const winner = touches.get(winnerId);
+
+    // Dramatic pause effect - brief flash
+    const flash = document.createElement('div');
+    flash.style.cssText = `
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(255,255,255,0.08);
+      z-index: 5;
+      pointer-events: none;
+      animation: flash-out 0.6s ease forwards;
+    `;
+    document.body.appendChild(flash);
+    setTimeout(() => flash.remove(), 600);
+
+    // Add flash animation
+    if (!document.getElementById('flash-style')) {
+      const style = document.createElement('style');
+      style.id = 'flash-style';
+      style.textContent = `
+        @keyframes flash-out {
+          0% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // Animate losers out
+    touches.forEach((finger, id) => {
+      if (id !== winnerId) {
+        finger.element.style.transition = 'transform 0.6s ease, opacity 0.6s ease';
+        finger.element.style.transform = 'scale(0.3)';
+        finger.element.style.opacity = '0';
+      }
+    });
+
+    // Animate winner
+    setTimeout(() => {
+      if (!winner || !winner.element) return;
+
+      // Winner burst particles
+      spawnBurstParticles(winner.x, winner.y, winner.color, 40);
+
+      // Winner glow and pulse
+      winner.element.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.5s ease';
+      winner.element.style.transform = 'scale(1.3)';
+      winner.element.style.boxShadow = `
+        0 0 40px ${hexToRgba(winner.color, 0.7)},
+        0 0 80px ${hexToRgba(winner.color, 0.4)},
+        0 0 120px ${hexToRgba(winner.color, 0.2)},
+        inset 0 -3px 8px rgba(0,0,0,0.2)
+      `;
+      winner.element.style.zIndex = '20';
+
+      // Add continuous pulse
+      setTimeout(() => {
+        if (!winner.element) return;
+        winner.element.style.animation = 'pulse-glow 1.2s ease-in-out infinite';
+      }, 500);
+
+      // Add expanding ring effect
+      spawnSelectionRings(winner.x, winner.y, winner.color);
+
+      // Add "CHOSEN" label below winner
+      const label = document.createElement('div');
+      label.style.cssText = `
+        position: fixed;
+        left: ${winner.x}px;
+        top: ${winner.y + CIRCLE_RADIUS + 20}px;
+        transform: translateX(-50%) translateY(10px);
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: ${winner.color};
+        text-shadow: 0 0 20px ${hexToRgba(winner.color, 0.5)};
+        opacity: 0;
+        transition: opacity 0.5s ease, transform 0.5s ease;
+        pointer-events: none;
+        z-index: 20;
+      `;
+      label.textContent = 'Chosen';
+      fingerContainer.appendChild(label);
+
+      requestAnimationFrame(() => {
+        label.style.opacity = '1';
+        label.style.transform = 'translateX(-50%) translateY(0)';
+      });
+    }, 300);
+  }
+
+  // --- Particle effects ---
+  function spawnRipple(x, y, color) {
+    const ripple = document.createElement('div');
+    ripple.style.cssText = `
+      position: fixed;
+      left: ${x}px;
+      top: ${y}px;
+      width: ${CIRCLE_RADIUS * 2}px;
+      height: ${CIRCLE_RADIUS * 2}px;
+      margin-left: -${CIRCLE_RADIUS}px;
+      margin-top: -${CIRCLE_RADIUS}px;
+      border-radius: 50%;
+      border: 2px solid ${hexToRgba(color, 0.4)};
+      animation: ripple-expand 0.8s ease-out forwards;
+      pointer-events: none;
+      z-index: 5;
+    `;
+    fingerContainer.appendChild(ripple);
+    setTimeout(() => ripple.remove(), 800);
+  }
+
+  function spawnBurstParticles(x, y, color, count) {
+    for (let i = 0; i < count; i++) {
+      const particle = document.createElement('div');
+      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.3;
+      const distance = 60 + Math.random() * 100;
+      const size = 3 + Math.random() * 6;
+      const duration = 0.6 + Math.random() * 0.6;
+
+      const endX = x + Math.cos(angle) * distance;
+      const endY = y + Math.sin(angle) * distance;
+
+      particle.style.cssText = `
+        position: fixed;
+        left: ${x}px;
+        top: ${y}px;
+        width: ${size}px;
+        height: ${size}px;
+        border-radius: 50%;
+        background: ${color};
+        box-shadow: 0 0 ${size * 2}px ${hexToRgba(color, 0.6)};
+        pointer-events: none;
+        z-index: 15;
+        transition: all ${duration}s cubic-bezier(0, 0.8, 0.2, 1);
+        opacity: 1;
+      `;
+      fingerContainer.appendChild(particle);
+
+      requestAnimationFrame(() => {
+        particle.style.left = endX + 'px';
+        particle.style.top = endY + 'px';
+        particle.style.opacity = '0';
+        particle.style.transform = `scale(0)`;
+      });
+
+      setTimeout(() => particle.remove(), duration * 1000 + 100);
+    }
+  }
+
+  function spawnSelectionRings(x, y, color) {
+    for (let i = 0; i < 3; i++) {
+      setTimeout(() => {
+        const ring = document.createElement('div');
+        ring.style.cssText = `
+          position: fixed;
+          left: ${x - CIRCLE_RADIUS}px;
+          top: ${y - CIRCLE_RADIUS}px;
+          width: ${CIRCLE_RADIUS * 2}px;
+          height: ${CIRCLE_RADIUS * 2}px;
+          border-radius: 50%;
+          border: 2px solid ${hexToRgba(color, 0.5)};
+          pointer-events: none;
+          z-index: 9;
+          animation: ripple-expand 1.2s ease-out forwards;
+        `;
+        fingerContainer.appendChild(ring);
+        setTimeout(() => ring.remove(), 1200);
+      }, i * 200);
+    }
+  }
+
+  // --- Reset ---
+  function resetAll() {
+    state = 'idle';
+    winnerId = null;
+    colorIndex = 0;
+
+    // Clear all fingers
+    touches.forEach((finger) => {
+      if (finger.element) {
+        finger.element.style.transition = 'transform 0.3s ease, opacity 0.3s ease';
+        finger.element.style.transform = 'scale(0)';
+        finger.element.style.opacity = '0';
+      }
+    });
+
+    setTimeout(() => {
+      // Remove all children from fingerContainer
+      while (fingerContainer.firstChild) {
+        fingerContainer.removeChild(fingerContainer.firstChild);
+      }
+      touches.clear();
+    }, 350);
+
+    resetCountdown();
+    prompt.classList.remove('hidden');
+    countdownRing.classList.remove('visible');
+  }
+
+  // --- Utility ---
+  function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  function lighten(hex, percent) {
+    let r = parseInt(hex.slice(1, 3), 16);
+    let g = parseInt(hex.slice(3, 5), 16);
+    let b = parseInt(hex.slice(5, 7), 16);
+    r = Math.min(255, r + Math.round((255 - r) * percent / 100));
+    g = Math.min(255, g + Math.round((255 - g) * percent / 100));
+    b = Math.min(255, b + Math.round((255 - b) * percent / 100));
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+  }
+
+  function darken(hex, percent) {
+    let r = parseInt(hex.slice(1, 3), 16);
+    let g = parseInt(hex.slice(3, 5), 16);
+    let b = parseInt(hex.slice(5, 7), 16);
+    r = Math.max(0, r - Math.round(r * percent / 100));
+    g = Math.max(0, g - Math.round(g * percent / 100));
+    b = Math.max(0, b - Math.round(b * percent / 100));
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+  }
+
+  // --- Prevent iOS Safari quirks ---
+  document.addEventListener('gesturestart', e => e.preventDefault());
+  document.addEventListener('gesturechange', e => e.preventDefault());
+  document.addEventListener('gestureend', e => e.preventDefault());
+
+  // Prevent pull-to-refresh and overscroll
+  document.body.addEventListener('touchmove', e => {
+    if (e.target === document.body || e.target === bgCanvas) {
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  // --- Start ---
+  init();
+})();
+</script>
+</body>
+</html>
