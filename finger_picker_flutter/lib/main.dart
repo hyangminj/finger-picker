@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +21,8 @@ class FingerPickerApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Finger Picker',
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF0A0A0F),
       ),
@@ -76,22 +78,6 @@ class Particle {
 class _FingerPickerScreenState extends State<FingerPickerScreen>
     with TickerProviderStateMixin {
 
-  // Localization strings
-  String get _placeYourFingers {
-    final locale = ui.PlatformDispatcher.instance.locale.languageCode;
-    return locale == 'ko' ? '손가락을 올려주세요' : 'Place your fingers';
-  }
-
-  String get _oneWillBeChosen {
-    final locale = ui.PlatformDispatcher.instance.locale.languageCode;
-    return locale == 'ko' ? '한 명이 선택됩니다' : 'One will be chosen';
-  }
-
-  String get _chosen {
-    final locale = ui.PlatformDispatcher.instance.locale.languageCode;
-    return locale == 'ko' ? '선택됨' : 'CHOSEN';
-  }
-
   static const List<Color> colors = [
     Color(0xFFFF6B6B),
     Color(0xFF4ECDC4),
@@ -114,14 +100,26 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
   static const double circleRadius = 44.0;
   static const int countdownMs = 2000;
 
+  // Particle constants
+  static const int maxBackgroundParticles = 30;
+  static const double particleSpawnProbability = 0.03;
+  static const double particleOpacityDecay = 0.0003;
+  static const int burstParticleCount = 40;
+  static const double burstParticleOpacityDecay = 0.01;
+
+  // Velocity constants
+  static const double particleVelocityRange = 0.5;
+  static const double particleMinVerticalVelocity = 0.3;
+  static const double particleMaxVerticalVelocity = 0.7;
+
   final Map<int, Finger> _fingers = {};
   int _colorIndex = 0;
   AppState _state = AppState.idle;
   int? _winnerId;
-  DateTime? _countdownStart;
   double _countdownProgress = 0.0;
 
   late AnimationController _pulseController;
+  late AnimationController _countdownController;
   late AnimationController _particleController;
   final List<Particle> _particles = [];
   final List<Particle> _burstParticles = [];
@@ -133,9 +131,12 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
-    )..addListener(() {
-        setState(() {});
-      });
+    );
+
+    _countdownController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: countdownMs),
+    )..addListener(_updateCountdownProgress);
 
     _particleController = AnimationController(
       vsync: this,
@@ -148,6 +149,7 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
   @override
   void dispose() {
     _pulseController.dispose();
+    _countdownController.dispose();
     _particleController.dispose();
     super.dispose();
   }
@@ -155,7 +157,8 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
   void _updateParticles() {
     setState(() {
       // Update background particles
-      if (_particles.length < 30 && math.Random().nextDouble() < 0.03) {
+      if (_particles.length < maxBackgroundParticles &&
+          math.Random().nextDouble() < particleSpawnProbability) {
         final size = MediaQuery.of(context).size;
         _particles.add(Particle(
           position: Offset(
@@ -163,8 +166,9 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
             size.height + 10,
           ),
           velocity: Offset(
-            (math.Random().nextDouble() - 0.5) * 0.5,
-            -(0.3 + math.Random().nextDouble() * 0.7),
+            (math.Random().nextDouble() - 0.5) * particleVelocityRange,
+            -(particleMinVerticalVelocity +
+                math.Random().nextDouble() * particleMaxVerticalVelocity),
           ),
           opacity: 0.1 + math.Random().nextDouble() * 0.15,
           radius: 1 + math.Random().nextDouble() * 2,
@@ -174,14 +178,14 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
 
       _particles.removeWhere((p) {
         p.position += p.velocity;
-        p.opacity -= 0.0003;
+        p.opacity -= particleOpacityDecay;
         return p.opacity <= 0 || p.position.dy < -10;
       });
 
       // Update burst particles
       _burstParticles.removeWhere((p) {
         p.position += p.velocity;
-        p.opacity -= 0.01;
+        p.opacity -= burstParticleOpacityDecay;
         return p.opacity <= 0;
       });
     });
@@ -254,29 +258,22 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
   }
 
   void _startCountdown() {
-    _countdownStart = DateTime.now();
-    _updateCountdown();
+    _countdownController.forward(from: 0.0);
   }
 
-  void _updateCountdown() {
-    if (_countdownStart == null || _state != AppState.countdown) return;
-
-    final elapsed = DateTime.now().difference(_countdownStart!).inMilliseconds;
-    final progress = (elapsed / countdownMs).clamp(0.0, 1.0);
-
+  void _updateCountdownProgress() {
     setState(() {
-      _countdownProgress = progress;
+      _countdownProgress = _countdownController.value;
     });
 
-    if (progress >= 1.0) {
+    if (_countdownController.value >= 1.0 && _state == AppState.countdown) {
       _selectWinner();
-    } else {
-      Future.delayed(const Duration(milliseconds: 16), _updateCountdown);
     }
   }
 
   void _resetCountdown() {
-    _countdownStart = null;
+    _countdownController.stop();
+    _countdownController.reset();
     setState(() {
       _countdownProgress = 0.0;
     });
@@ -314,9 +311,8 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
   }
 
   void _createBurstParticles(Offset position, Color color) {
-    const particleCount = 40;
-    for (int i = 0; i < particleCount; i++) {
-      final angle = (2 * math.pi * i) / particleCount +
+    for (int i = 0; i < burstParticleCount; i++) {
+      final angle = (2 * math.pi * i) / burstParticleCount +
           (math.Random().nextDouble() - 0.5) * 0.3;
       final speed = 2.0 + math.Random().nextDouble() * 2.0;
 
@@ -348,6 +344,8 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return Scaffold(
       body: Listener(
         onPointerDown: _handlePointerDown,
@@ -360,152 +358,128 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
         child: Stack(
           children: [
             // Background particles
-            CustomPaint(
-              painter: BackgroundPainter(_particles),
-              size: Size.infinite,
-            ),
+            ParticleCanvas(particles: _particles),
 
             // Prompt text
             if (_state == AppState.idle)
-              Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _placeYourFingers,
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.w300,
-                        letterSpacing: 2,
-                        color: Colors.white.withOpacity(0.7),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _oneWillBeChosen,
-                      style: TextStyle(
-                        fontSize: 15,
-                        letterSpacing: 1,
-                        color: Colors.white.withOpacity(0.35),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              IdlePromptWidget(l10n: l10n),
 
             // Burst particles
-            CustomPaint(
-              painter: BurstParticlePainter(_burstParticles),
-              size: Size.infinite,
-            ),
+            BurstParticleCanvas(particles: _burstParticles),
 
             // Finger circles
             ..._fingers.entries.map((entry) {
               final finger = entry.value;
-              final pulseScale = finger.isWinner
-                  ? 1.0 + (_pulseController.value * 0.15)
-                  : 1.0;
-
-              return AnimatedPositioned(
-                duration: const Duration(milliseconds: 16),
-                left: finger.position.dx - circleRadius,
-                top: finger.position.dy - circleRadius,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 600),
-                  opacity: finger.opacity,
-                  child: AnimatedScale(
-                    duration: const Duration(milliseconds: 600),
-                    scale: finger.scale * pulseScale,
-                    child: Container(
-                      width: circleRadius * 2,
-                      height: circleRadius * 2,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: RadialGradient(
-                          center: const Alignment(-0.3, -0.3),
-                          colors: [
-                            _lightenColor(finger.color, 0.3),
-                            finger.color,
-                            _darkenColor(finger.color, 0.2),
-                          ],
-                          stops: const [0.0, 0.6, 1.0],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: finger.color.withOpacity(0.4),
-                            blurRadius: finger.isWinner ? 40 : 30,
-                            spreadRadius: finger.isWinner ? 10 : 0,
-                          ),
-                          BoxShadow(
-                            color: finger.color.withOpacity(0.15),
-                            blurRadius: 60,
-                          ),
-                        ],
-                      ),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            center: const Alignment(-0.4, -0.4),
-                            radius: 0.5,
-                            colors: [
-                              Colors.white.withOpacity(0.4),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+              return FingerCircleWidget(
+                key: ValueKey(finger.id),
+                finger: finger,
+                pulseController: finger.isWinner ? _pulseController : null,
+                circleRadius: circleRadius,
               );
             }),
 
             // Winner label
             if (_winnerId != null && _fingers.containsKey(_winnerId))
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 300),
-                left: _fingers[_winnerId]!.position.dx - 50,
-                top: _fingers[_winnerId]!.position.dy + circleRadius + 20,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 500),
-                  opacity: _state == AppState.selected ? 1.0 : 0.0,
-                  child: SizedBox(
-                    width: 100,
-                    child: Text(
-                      _chosen,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 3,
-                        color: _fingers[_winnerId]!.color,
-                        shadows: [
-                          Shadow(
-                            color: _fingers[_winnerId]!.color.withOpacity(0.5),
-                            blurRadius: 20,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+              WinnerLabelWidget(
+                finger: _fingers[_winnerId]!,
+                l10n: l10n,
+                circleRadius: circleRadius,
+                isVisible: _state == AppState.selected,
               ),
 
             // Countdown ring
             if (_state == AppState.countdown)
-              Positioned(
-                top: 24,
-                right: 24,
-                child: SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: CustomPaint(
-                    painter: CountdownRingPainter(_countdownProgress),
-                  ),
-                ),
-              ),
+              CountdownRingWidget(progress: _countdownProgress),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// Widget Components
+
+class FingerCircleWidget extends StatelessWidget {
+  final Finger finger;
+  final AnimationController? pulseController;
+  final double circleRadius;
+
+  const FingerCircleWidget({
+    super.key,
+    required this.finger,
+    required this.pulseController,
+    required this.circleRadius,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 16),
+      left: finger.position.dx - circleRadius,
+      top: finger.position.dy - circleRadius,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 600),
+        opacity: finger.opacity,
+        child: pulseController != null
+            ? AnimatedBuilder(
+                animation: pulseController!,
+                builder: (context, child) {
+                  final pulseScale = 1.0 + (pulseController!.value * 0.15);
+                  return AnimatedScale(
+                    duration: const Duration(milliseconds: 600),
+                    scale: finger.scale * pulseScale,
+                    child: child,
+                  );
+                },
+                child: _buildCircle(),
+              )
+            : AnimatedScale(
+                duration: const Duration(milliseconds: 600),
+                scale: finger.scale,
+                child: _buildCircle(),
+              ),
+      ),
+    );
+  }
+
+  Widget _buildCircle() {
+    return Container(
+      width: circleRadius * 2,
+      height: circleRadius * 2,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          center: const Alignment(-0.3, -0.3),
+          colors: [
+            _lightenColor(finger.color, 0.3),
+            finger.color,
+            _darkenColor(finger.color, 0.2),
+          ],
+          stops: const [0.0, 0.6, 1.0],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: finger.color.withOpacity(0.4),
+            blurRadius: finger.isWinner ? 40 : 30,
+            spreadRadius: finger.isWinner ? 10 : 0,
+          ),
+          BoxShadow(
+            color: finger.color.withOpacity(0.15),
+            blurRadius: 60,
+          ),
+        ],
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            center: const Alignment(-0.4, -0.4),
+            radius: 0.5,
+            colors: [
+              Colors.white.withOpacity(0.4),
+              Colors.transparent,
+            ],
+          ),
         ),
       ),
     );
@@ -526,10 +500,27 @@ class _FingerPickerScreenState extends State<FingerPickerScreen>
   }
 }
 
-class BackgroundPainter extends CustomPainter {
+class ParticleCanvas extends StatelessWidget {
   final List<Particle> particles;
 
-  BackgroundPainter(this.particles);
+  const ParticleCanvas({
+    super.key,
+    required this.particles,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _BackgroundPainter(particles),
+      size: Size.infinite,
+    );
+  }
+}
+
+class _BackgroundPainter extends CustomPainter {
+  final List<Particle> particles;
+
+  _BackgroundPainter(this.particles);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -543,13 +534,30 @@ class BackgroundPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(BackgroundPainter oldDelegate) => true;
+  bool shouldRepaint(_BackgroundPainter oldDelegate) => true;
 }
 
-class BurstParticlePainter extends CustomPainter {
+class BurstParticleCanvas extends StatelessWidget {
   final List<Particle> particles;
 
-  BurstParticlePainter(this.particles);
+  const BurstParticleCanvas({
+    super.key,
+    required this.particles,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _BurstParticlePainter(particles),
+      size: Size.infinite,
+    );
+  }
+}
+
+class _BurstParticlePainter extends CustomPainter {
+  final List<Particle> particles;
+
+  _BurstParticlePainter(this.particles);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -567,13 +575,37 @@ class BurstParticlePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(BurstParticlePainter oldDelegate) => true;
+  bool shouldRepaint(_BurstParticlePainter oldDelegate) => true;
 }
 
-class CountdownRingPainter extends CustomPainter {
+class CountdownRingWidget extends StatelessWidget {
   final double progress;
 
-  CountdownRingPainter(this.progress);
+  const CountdownRingWidget({
+    super.key,
+    required this.progress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      top: 24,
+      right: 24,
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: CustomPaint(
+          painter: _CountdownRingPainter(progress),
+        ),
+      ),
+    );
+  }
+}
+
+class _CountdownRingPainter extends CustomPainter {
+  final double progress;
+
+  _CountdownRingPainter(this.progress);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -606,6 +638,91 @@ class CountdownRingPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(CountdownRingPainter oldDelegate) =>
+  bool shouldRepaint(_CountdownRingPainter oldDelegate) =>
       progress != oldDelegate.progress;
+}
+
+class WinnerLabelWidget extends StatelessWidget {
+  final Finger finger;
+  final AppLocalizations l10n;
+  final double circleRadius;
+  final bool isVisible;
+
+  const WinnerLabelWidget({
+    super.key,
+    required this.finger,
+    required this.l10n,
+    required this.circleRadius,
+    required this.isVisible,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 300),
+      left: finger.position.dx - 50,
+      top: finger.position.dy + circleRadius + 20,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 500),
+        opacity: isVisible ? 1.0 : 0.0,
+        child: SizedBox(
+          width: 100,
+          child: Text(
+            l10n.chosen,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 3,
+              color: finger.color,
+              shadows: [
+                Shadow(
+                  color: finger.color.withOpacity(0.5),
+                  blurRadius: 20,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class IdlePromptWidget extends StatelessWidget {
+  final AppLocalizations l10n;
+
+  const IdlePromptWidget({
+    super.key,
+    required this.l10n,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            l10n.placeYourFingers,
+            style: TextStyle(
+              fontSize: 32,
+              fontWeight: FontWeight.w300,
+              letterSpacing: 2,
+              color: Colors.white.withOpacity(0.7),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            l10n.oneWillBeChosen,
+            style: TextStyle(
+              fontSize: 15,
+              letterSpacing: 1,
+              color: Colors.white.withOpacity(0.35),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
