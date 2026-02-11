@@ -1,0 +1,15 @@
+{
+  "@@locale": "ko",
+  "placeYourFingers": "손가락을 올려주세요",
+  "@placeYourFingers": {
+    "description": "Main prompt text"
+  },
+  "oneWillBeChosen": "한 명이 선택됩니다",
+  "@oneWillBeChosen": {
+    "description": "Subtitle prompt text"
+  },
+  "chosen": "선택됨",
+  "@chosen": {
+    "description": "Winner label"
+  }
+}
